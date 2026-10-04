@@ -111,6 +111,7 @@ Install Go **1.24 or later**. Mac builds target **macOS Tahoe 26 or later**; App
 ```sh
 git clone https://github.com/jgeurts/open-gears.git
 cd open-gears
+git checkout v0.1.0-alpha.1
 make build
 ./bin/open-gears devices
 
