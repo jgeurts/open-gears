@@ -10,7 +10,7 @@ This project is independent of Shimano and Specialized. The bicycle's model does
 | --- | --- |
 | Find SM-BCR2 and read USB descriptors | Verified on macOS with an actual `1e44:7220` adapter |
 | Load the recognized OEM USB-controller image into volatile RAM | Verified on the same adapter; requires your local firmware file |
-| Initialize the controller's UART | Verified on macOS |
+| Initialize, close, and reopen the controller's UART | Verified on macOS; drains bridge status notifications throughout the session |
 | Read adapter link and application firmware version | Verified: **3.0.1, revision 0** on the test adapter |
 | Prepare the adapter and read its component slot bitmap | Verified in adapter-master mode; the current connection reports zero bicycle components |
 | Read bicycle component information and paddle assignments | Implemented, experimental; no actual component or paddle result has been verified |
@@ -111,7 +111,7 @@ Install Go **1.24 or later**. Mac builds target **macOS Tahoe 26 or later**; App
 ```sh
 git clone https://github.com/jgeurts/open-gears.git
 cd open-gears
-git checkout v0.1.0-alpha.1
+git checkout v0.1.0-alpha.2
 make build
 ./bin/open-gears devices
 
@@ -131,6 +131,7 @@ Mac packages dynamically link libusb **1.0.30** with the upstream shutdown fix f
 - **Image rejected:** check the filename, size, and SHA-256 above. Bicycle firmware and other TI controller images are not interchangeable.
 - **Adapter in boot mode after disconnect:** supply the local image again. Controller RAM is volatile.
 - **Busy/access error:** close other USB clients. Linux may require a narrowly scoped udev permission rule or handling a kernel driver; broad permissions are unnecessary.
+- **Intermittent close error with 0.1.0-alpha.1:** update to 0.1.0-alpha.2 or later. Earlier builds enabled bridge status notifications without reading them, which could make UART close fail and return the adapter to boot mode. USB and trace errors remain visible in current builds.
 - **Adapter query works, but no bicycle units are found:** this is the current hardware result. Check the bike-side connection and bicycle battery; an empty bitmap alone does not establish a disconnected plug or any particular cause. Retain the result and sanitized trace for diagnosis.
 - **Cleanup fails or shifting remains unavailable:** stop the app/CLI, disconnect SM-BCR2 from the bicycle and USB, then reconnect after the bicycle returns to normal. Do not ride with a service session still active. The client attempts cleanup, but USB loss can prevent confirmation.
 
