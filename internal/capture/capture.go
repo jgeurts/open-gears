@@ -41,6 +41,7 @@ type Event struct {
 	Setup        *Setup `json:"setup,omitempty"`
 }
 
+// Filter uses -1 for any bus/address; bus 0 is valid on macOS.
 type Filter struct{ Bus, Address int }
 
 func normalizeHex(s string) (string, error) {
@@ -195,7 +196,7 @@ func ImportTSV(r io.Reader, filter Filter) ([]Event, error) {
 		if err != nil {
 			return nil, err
 		}
-		if filter.Bus != 0 && int(bus) != filter.Bus || filter.Address != 0 && int(addr) != filter.Address {
+		if filter.Bus >= 0 && int(bus) != filter.Bus || filter.Address >= 0 && int(addr) != filter.Address {
 			continue
 		}
 		frame, err := parse("frame.number", 32)
@@ -327,7 +328,14 @@ func Diff(a, b []Event) Comparison {
 	d := Comparison{Changes: []Change{}, Note: "Indices are zero-based. Alignment uses 32-event lookahead; byte differences do not identify settings."}
 	i, j := 0, 0
 	for i < len(a) || j < len(b) {
-		if i < len(a) && j < len(b) && signature(a[i]) == signature(b[j]) {
+		var aSig, bSig string
+		if i < len(a) {
+			aSig = signature(a[i])
+		}
+		if j < len(b) {
+			bSig = signature(b[j])
+		}
+		if i < len(a) && j < len(b) && aSig == bSig {
 			i++
 			j++
 			continue
@@ -344,13 +352,13 @@ func Diff(a, b []Event) Comparison {
 		}
 		insert, del := 0, 0
 		for k := 1; k <= 32; k++ {
-			if j+k < len(b) && signature(a[i]) == signature(b[j+k]) {
+			if j+k < len(b) && aSig == signature(b[j+k]) {
 				insert = k
 				break
 			}
 		}
 		for k := 1; k <= 32; k++ {
-			if i+k < len(a) && signature(a[i+k]) == signature(b[j]) {
+			if i+k < len(a) && signature(a[i+k]) == bSig {
 				del = k
 				break
 			}

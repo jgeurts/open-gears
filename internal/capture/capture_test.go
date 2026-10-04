@@ -47,8 +47,17 @@ func TestMalformedInputIsRejected(t *testing.T) {
 		}
 	}
 	bad := strings.Replace(syntheticTSV, "01:02:ff", "01:XX:ff", 1)
-	if _, err := ImportTSV(strings.NewReader(bad), Filter{}); err == nil {
+	if _, err := ImportTSV(strings.NewReader(bad), Filter{Bus: -1, Address: -1}); err == nil {
 		t.Fatal("accepted invalid payload")
+	}
+}
+
+func TestMacBusZeroSelection(t *testing.T) {
+	tsv := "frame.number\tusb.bus_id\tusb.device_address\tusb.endpoint_address\tusb.capdata\n" +
+		"1\t0\t12\t0x01\tbb04fcbb\n2\t1\t12\t0x01\tbb05fbbb\n"
+	events, err := ImportTSV(strings.NewReader(tsv), Filter{Bus: 0, Address: -1})
+	if err != nil || len(events) != 1 || events[0].Bus != 0 {
+		t.Fatalf("bus zero filter: %+v, %v", events, err)
 	}
 }
 
