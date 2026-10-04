@@ -114,6 +114,20 @@ The live minimal sequence omitted both purges and the repeated OPEN/START and su
 
 macOS teardown exposed a separate host-library trap: stock libusb 1.0.30 can deadlock around hotplug shutdown. Project builds use that version with the upstream fix from [libusb PR #1780](https://github.com/libusb/libusb/pull/1780), merged as `94a5224`. The patched build stopped the observed host shutdown hang. The later mode-transition success followed the added OEM preparation sequence; it does not establish component communication. Release bundles dynamically link the patched library and provide its corresponding source and LGPL license; changing the library requires repeating packaged startup/teardown checks.
 
+### Status interrupts are required for reliable CLOSE
+
+**Documented:** the [Linux TI driver](https://github.com/torvalds/linux/blob/master/drivers/usb/serial/ti_usb_3410_5052.c) starts its interrupt reader before UART setup and leaves it running through CLOSE. CLOSE is vendor OUT `40`, request `07`, value `0000`, index `0003`, with no payload. No extra STOP or purge is required for that teardown sequence.
+
+**Recovered:** the fingerprinted `umpf3410.i51` image listed above sends two-byte modem-status notifications when UART flag `2000` is enabled. Its notification routine (image offset `1c5c`, modem-status caller `096e`) waits for the previous interrupt IN packet to be consumed before queuing another. That wait does not service the watchdog. START enables the watchdog; normal firmware execution services it. These are behavioral observations from local image inspection, not redistributed firmware instructions.
+
+The [TI datasheet, revision J](https://www.ti.com/lit/ds/symlink/tusb3410.pdf), sections 5.5.4.7–5.5.4.9, identifies XDATA `ff5a` as endpoint 3's input byte-count register: bit 7 marks an empty buffer. Section 5.5.2.1.3 documents the 128 ms watchdog reset. **Inferred from those documented registers and the recovered wait:** leaving a status packet unread can block the next notification, prevent watchdog servicing, and reset the bridge into boot mode. A CLOSE stall is therefore not evidence that the port was already closed.
+
+**Live, 2026-10-04:** adapter-only Open → link/version queries → CLOSE cycles reproduced this on macOS Tahoe 26 arm64 with gousb 1.1.3, patched libusb 1.0.30, and adapter application firmware 3.0.1 revision 0. No bicycle service session was entered. Starting in boot mode, four cycles without an interrupt reader alternated successful CLOSE after RAM loading with CLOSE `PIPE` after reopening. The failed control transfers took 136–138 ms and the same physical USB path returned from runtime configuration 2/address 12 to boot configuration 1/address 11. Waiting 250 ms before CLOSE did not prevent the failure.
+
+Changing only the host to continuously read interrupt IN `83` yielded four successful CLOSE transfers in 3.1–3.6 ms, with packets `34 d9` initially and `34 d0` on reopening; all four retained runtime configuration 2. Removing the reader reproduced two failures in the next four cycles. With the production reader in place, the original failing-trace/read/CLOSE/reopen probe and six further ordinary cycles all closed successfully and remained in runtime mode. The injected trace failure still surfaced at final Close.
+
+The transport now discovers the interrupt endpoint, starts its reader before UART configuration, records notifications separately from bulk UART data, and keeps reading through CLOSE even if an operation context or trace output fails. It cancels and joins the reader before releasing USB handles. Trace writes are serialized with bulk/control records, and unexpected interrupt-read failures remain visible at Close. This change adds host reads; the existing UART control requests are unchanged. Linux hardware, other firmware images, and occupied bicycle service-session cleanup still need separate validation.
+
 ## E-Tube serial framing
 
 **Recovered:** decoded body is `control, payload..., FCS`. The FCS makes the additive sum of every decoded body byte zero modulo 256. Compute it over control and payload before escaping.

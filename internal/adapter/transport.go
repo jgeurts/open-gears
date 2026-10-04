@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/google/gousb"
@@ -32,6 +33,7 @@ type Options struct {
 }
 
 type traceRecorder struct {
+	mu       sync.Mutex
 	writer   io.Writer
 	started  time.Time
 	sequence int
@@ -48,7 +50,50 @@ type Connection struct {
 	decoder     protocol.Decoder
 	pending     []protocol.Frame
 	trace       *traceRecorder
+	interrupts  *interruptReader
 	portStarted bool
+}
+
+// Modem-status notifications must be consumed even when the caller is not
+// reading UART data. The reader outlives operation contexts so cancellation
+// cannot stop it before the UART CLOSE request has completed.
+type interruptReader struct {
+	cancel context.CancelFunc
+	done   <-chan error
+}
+
+func readInterrupts(read func(context.Context, []byte) (int, error), packetSize int, record func([]byte)) *interruptReader {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		buf := make([]byte, packetSize)
+		for {
+			n, err := read(ctx, buf)
+			if n > 0 {
+				record(buf[:n])
+			}
+			if err != nil {
+				if ctx.Err() != nil && errors.Is(err, gousb.TransferCancelled) {
+					err = nil
+				}
+				done <- err
+				return
+			}
+			if ctx.Err() != nil {
+				done <- nil
+				return
+			}
+		}
+	}()
+	return &interruptReader{cancel: cancel, done: done}
+}
+
+func (r *interruptReader) stop() error {
+	r.cancel()
+	if err := <-r.done; err != nil {
+		return fmt.Errorf("read UART status: %w", err)
+	}
+	return nil
 }
 
 func wrapFirmware(raw []byte) ([]byte, error) {
@@ -281,8 +326,11 @@ func Open(ctx context.Context, options Options) (*Connection, error) {
 	if err != nil {
 		return fail(err)
 	}
-	var inNumber, outNumber int
+	var inNumber, outNumber, interruptNumber int
 	for _, ep := range c.intf.Setting.Endpoints {
+		if ep.TransferType == gousb.TransferTypeInterrupt && ep.Direction == gousb.EndpointDirectionIn {
+			interruptNumber = ep.Number
+		}
 		if ep.TransferType == gousb.TransferTypeBulk {
 			if ep.Direction == gousb.EndpointDirectionIn {
 				inNumber = ep.Number
@@ -293,6 +341,9 @@ func Open(ctx context.Context, options Options) (*Connection, error) {
 	}
 	if inNumber == 0 || outNumber == 0 {
 		return fail(fmt.Errorf("runtime interface lacks serial bulk endpoints"))
+	}
+	if interruptNumber == 0 {
+		return fail(fmt.Errorf("runtime interface lacks UART status interrupt endpoint"))
 	}
 	c.in, err = c.intf.InEndpoint(inNumber)
 	if err != nil {
@@ -305,6 +356,13 @@ func Open(ctx context.Context, options Options) (*Connection, error) {
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
+	interrupt, err := c.intf.InEndpoint(interruptNumber)
+	if err != nil {
+		return fail(err)
+	}
+	c.interrupts = readInterrupts(interrupt.ReadContext, interrupt.Desc.MaxPacketSize, func(data []byte) {
+		c.record(byte(interrupt.Desc.Address), "interrupt", data, nil)
+	})
 	if err := c.control(5, 0, 3, uartConfig()); err != nil {
 		return fail(fmt.Errorf("set 38400 baud: %w", err))
 	}
@@ -323,7 +381,12 @@ func Open(ctx context.Context, options Options) (*Connection, error) {
 }
 
 func (c *Connection) record(endpoint byte, kind string, payload []byte, setup *capture.Setup) {
-	if c.trace == nil || c.trace.err != nil {
+	if c.trace == nil {
+		return
+	}
+	c.trace.mu.Lock()
+	defer c.trace.mu.Unlock()
+	if c.trace.err != nil {
 		return
 	}
 	c.trace.sequence++
@@ -549,6 +612,12 @@ func (c *Connection) closeHardware() error {
 	if c.dev != nil && c.portStarted {
 		err = c.control(7, 0, 3, nil)
 		c.portStarted = false
+	}
+	// CLOSE can itself need the status endpoint to drain. Cancel only after
+	// that control transfer, then join before releasing any USB handles.
+	if c.interrupts != nil {
+		err = errors.Join(err, c.interrupts.stop())
+		c.interrupts = nil
 	}
 	if c.intf != nil {
 		c.intf.Close()

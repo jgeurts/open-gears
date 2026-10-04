@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.2 — 2026-10-04
+
+### Fixed
+
+- Read SM-BCR2 bridge status notifications while the UART is open, including during close. Leaving these notifications unread caused intermittent UART close stalls and bridge resets on the tested Mac.
+- Keep interrupt-reader cancellation and completion ahead of USB handle teardown, and serialize trace recording across readers.
+
 ## 0.1.0-alpha.1 — 2026-10-04
 
 ### Added
