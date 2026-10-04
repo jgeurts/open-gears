@@ -1,0 +1,11 @@
+/bin/
+/captures/
+/vendor-firmware/
+*.pcap
+*.pcapng
+*.exe
+*.dll
+*.sys
+*.i51
+*.test
+.DS_Store
