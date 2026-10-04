@@ -1,4 +1,7 @@
 /bin/
+/build/
+/dist/
+/macos/.build/
 /captures/
 /vendor-firmware/
 *.pcap
@@ -9,3 +12,4 @@
 *.i51
 *.test
 .DS_Store
+*.dSYM/

@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible problem
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Open Gears version, OS, CPU architecture, adapter and component model numbers.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Steps and behavior
+      description: What you did, what happened, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Error text and sanitized JSON or trace. Do not attach firmware, driver binaries, personal information, or serial numbers.
