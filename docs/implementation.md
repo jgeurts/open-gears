@@ -1,4 +1,6 @@
-# SM-BCR2 CLI implementation brief
+# Initial SM-BCR2 USB milestone
+
+This is the historical brief for the initial USB and protocol investigation. The current scope includes a native Mac app and guarded X/Y paddle editing; see the [README](../README.md) for capabilities and [protocol evidence](protocol.md) for write checks and hardware limitations.
 
 Build a Go CLI for a Shimano SM-BCR2 attached to an older Specialized Diverge with Di2. Implement actual USB inspection and offline protocol investigation now, then extend live functionality only as primary-source evidence supports it. The bicycle model does not establish its installed Di2 components.
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.0-alpha.3 — 2026-10-05
+
+### Added
+
+- X/Y paddle editing for identified conventional Di2 road/GRX shifters, with visible previews, fresh identity/firmware/assignment checks, preserved extra-button channels, single-write execution, and independent readback.
+- CLI paddle plan/apply commands with physical USB-port ownership, strict plan validation, and structured partial/unknown outcomes.
+- A simpler native Mac workflow: one bicycle connection action, shifter editors, an Apply bar, clear result states, and secondary advanced details.
+- A single-command Mac installer that selects the correct architecture, verifies the release checksum and bundle signature, and preserves an existing app.
+- Tests for stale plans, preserved channels, short replies, lost acknowledgments, cancellation, partial writes, editor ownership, and structured helper failures.
+
+### Fixed
+
+- Bicycle preparation now follows the recovered firmware-dependent power sequence and SM-BCR2 master-mode retry, and ends bicycle sessions with the adapter reset used by the OEM disconnect path.
+- Two-byte paddle replies are accepted for supported layouts; the previous four-byte minimum could reject valid reads.
+- Interrupted writes retain their readback result and get enough time for service cleanup and adapter reset.
+- Repeated Mac builds start from a fresh executable before editing bundled-library paths, avoiding duplicate runtime paths.
+
+### Hardware verification
+
+- Firmware 3.0.1 accepted power status/supply commands and subsequent reset/USB cleanup. The connection still returned no bicycle components; actual component writes and durable readback after reconnect remain unverified.
+
 ## 0.1.0-alpha.2 — 2026-10-04
 
 ### Fixed

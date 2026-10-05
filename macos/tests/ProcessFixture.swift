@@ -23,6 +23,16 @@ struct ProcessFixture {
         case "failure":
             FileHandle.standardError.write(Data("  The adapter was disconnected.\n".utf8))
             exit(23)
+        case "structured-failure":
+            FileHandle.standardOutput.write(Data(#"{"status":"unknown","changes":[]}"#.utf8))
+            FileHandle.standardError.write(Data("Readback failed.\n".utf8))
+            exit(1)
+        case "structured-timeout":
+            signal(SIGTERM) { _ in
+                _ = write(STDOUT_FILENO, "{\"status\":\"unknown\",\"changes\":[]}", 33)
+                _exit(1)
+            }
+            while true { pause() }
         case "graceful-timeout":
             let marker = URL(fileURLWithPath: arguments[1])
             terminationMarker = open(marker.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)

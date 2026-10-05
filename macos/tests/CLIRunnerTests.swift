@@ -47,6 +47,25 @@ struct CLIRunnerTests {
             }
             print("PASS failed command diagnostic")
 
+            let structuredFailure = try await CLIRunner.run(
+                executable: helper, arguments: ["structured-failure"], timeout: 5, allowFailure: true
+            )
+            try expect(!structuredFailure.succeeded, "Failed apply was reported as successful.")
+            try expect(String(decoding: structuredFailure.output, as: UTF8.self) == #"{"status":"unknown","changes":[]}"#,
+                       "Structured apply failure lost its outcome.")
+            try expect(structuredFailure.diagnostic == "Readback failed.", "Structured apply failure lost its diagnostic.")
+            print("PASS structured outcome retained on a failed apply")
+
+            let cancelledOutcome = try await CLIRunner.run(
+                executable: helper, arguments: ["structured-timeout"], timeout: 0.75,
+                terminationGrace: 0.5, allowFailure: true
+            )
+            try expect(cancelledOutcome.timedOut && !cancelledOutcome.succeeded,
+                       "Cancelled apply did not retain its timeout state.")
+            try expect(String(decoding: cancelledOutcome.output, as: UTF8.self) == #"{"status":"unknown","changes":[]}"#,
+                       "Graceful cancellation lost the helper's apply outcome.")
+            print("PASS structured apply outcome retained after graceful timeout cleanup")
+
             let missing = directory.appendingPathComponent("missing-helper")
             do {
                 _ = try await CLIRunner.run(executable: missing, arguments: [])
@@ -72,6 +91,15 @@ struct CLIRunnerTests {
             }
             try expect(kill(pid, 0) == -1 && errno == ESRCH, "Timed-out helper is still alive.")
             print("PASS timeout forcibly stops a helper that ignores SIGTERM")
+
+            do {
+                _ = try await CLIRunner.run(
+                    executable: helper, arguments: ["ignored-timeout", ignoredMarker.path],
+                    timeout: 0.75, terminationGrace: 0.5, allowFailure: true
+                )
+                throw TestFailure(message: "A forcibly terminated apply returned a trustworthy result.")
+            } catch CLIError.timedOut { }
+            print("PASS forced termination remains unknown in structured apply mode")
         } catch {
             FileHandle.standardError.write(Data("FAIL \(error.localizedDescription)\n".utf8))
             exit(1)

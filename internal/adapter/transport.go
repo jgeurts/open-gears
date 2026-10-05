@@ -25,8 +25,9 @@ import (
 const FirmwareSHA256 = "2a392186cf3d93b6a56514cdcd483a26097bf20b2bfc744bad7bb2fa1fd8bcd6"
 
 type Options struct {
-	Bus      int // -1 means any; bus 0 is valid on macOS.
-	Address  int // -1 means any.
+	Bus      int   // -1 means any; bus 0 is valid on macOS.
+	Address  int   // -1 means any.
+	Path     []int // Optional physical USB port path, retained across re-enumeration.
 	Firmware string
 	Trace    io.Writer
 	recorder *traceRecorder
@@ -52,6 +53,19 @@ type Connection struct {
 	trace       *traceRecorder
 	interrupts  *interruptReader
 	portStarted bool
+}
+
+type Location struct {
+	Bus     int   `json:"bus"`
+	Address int   `json:"address"`
+	Path    []int `json:"path"`
+}
+
+func (c *Connection) Location() Location {
+	if c == nil || c.dev == nil {
+		return Location{}
+	}
+	return Location{Bus: c.dev.Desc.Bus, Address: c.dev.Desc.Address, Path: append([]int(nil), c.dev.Desc.Path...)}
 }
 
 // Modem-status notifications must be consumed even when the caller is not
@@ -160,6 +174,9 @@ func selected(options Options) (usb.Device, error) {
 	var matches []usb.Device
 	for _, d := range devices {
 		if options.Bus >= 0 && options.Bus != d.Bus || options.Address >= 0 && options.Address != d.Address {
+			continue
+		}
+		if len(options.Path) > 0 && !slices.Equal(options.Path, d.Path) {
 			continue
 		}
 		matches = append(matches, d)

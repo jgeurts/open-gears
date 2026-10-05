@@ -1,6 +1,6 @@
 # Contributing
 
-Open Gears currently verifies SM-BCR2 adapter access on macOS. Bicycle discovery and paddle reading are experimental; stored-setting writes, flash firmware updates, and error checks are not implemented.
+Open Gears verifies SM-BCR2 adapter access on macOS. Bicycle discovery, paddle reading, and guarded X/Y assignment editing are experimental. Extra-button editors, other setting writes, flash updates, and error checks are not implemented. Actual component writes still need hardware validation.
 
 ## Development
 
@@ -12,9 +12,11 @@ make check
 make app       # macOS: compile the native app
 ```
 
-`make check` builds the pinned USB dependency, checks gofmt, runs go vet, and runs the Go tests with the race detector. On macOS it also tests native helper execution with synthetic processes, including large concurrent output and timeout cleanup. Tests use synthetic packets/captures and do not operate hardware. Changes to app code also need `make app`; Go tests do not verify Swift behavior.
+`make check` builds the pinned USB dependency, checks gofmt, runs go vet, and runs the Go tests with the race detector. On macOS it also tests native helper execution with synthetic processes, including large concurrent output and timeout cleanup. Isolated installer tests verify platform selection and preservation of an existing app on validation failures. Tests use synthetic packets/captures and do not operate hardware. Changes to app code also need `make app`; Go tests do not verify Swift behavior.
 
 Linux test binaries need the private libusb directory in their runtime search path. `scripts/check.sh` supplies it; link-time `-L` alone is insufficient. Distribution binaries instead resolve their adjacent bundled library.
+
+Mac packaging edits the executable's library load commands after Go links it. Go can recognize the unchanged build ID and reuse that already-edited output on a repeat build. `scripts/build.sh` therefore builds to a fresh temporary path before replacing the CLI. Keep this step: otherwise a repeat build can fail when adding the same runtime library path twice. CI exercises `make build` followed by `make package` with the same version.
 
 Use the shared Linear ticket when that integration is available. Record follow-up work there, use a `codex/` branch unless the task specifies another name, and link the ticket and GitHub PR. Keep changes focused and document incomplete checks explicitly.
 
@@ -39,6 +41,6 @@ Before tagging a release:
 1. Run `make check`, compile the Mac app, and exercise packaged CLI/app artifacts on the relevant Mac architecture.
 2. Verify bundled dynamic library paths work without Homebrew or developer build directories.
 3. Include checksums, the MIT project license, third-party licenses, and `libusb-1.0.30-patched-source.tar.gz` with upstream source, the patch, LGPL license, and rebuild instructions.
-4. Update [CHANGELOG.md](CHANGELOG.md) and the capability table. Record platforms and hardware functions not verified.
+4. Update [CHANGELOG.md](CHANGELOG.md), the capability table, the README's pinned install command, and the default version in `scripts/install.sh`. Record platforms and hardware functions not verified.
 
 Mac artifacts use an ad hoc signature and have no Developer ID signature or notarization. Do not describe compilation or a local launch as distribution-signing/notarization verification.

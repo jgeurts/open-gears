@@ -318,3 +318,10 @@ func TestGRXPaddleLayoutsRequireEvidencedPartNumbers(t *testing.T) {
 		}
 	}
 }
+
+func TestFourChannelPaddlesAcceptTwoByteReply(t *testing.T) {
+	p, err := decodePaddles(Unit{Series: 5, Number: 1, Part: 1}, []byte{0x01, 0xab})
+	if err != nil || p == nil || p.Raw != "01ab" || *p.C != 10 || *p.S != 11 {
+		t.Fatalf("valid two-byte assignment reply rejected: %+v, %v", p, err)
+	}
+}
