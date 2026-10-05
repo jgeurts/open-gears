@@ -4,6 +4,8 @@ import Foundation
 struct CLIResult: Sendable {
     let output: Data
     let diagnostic: String
+    let succeeded: Bool
+    let timedOut: Bool
 }
 
 enum CLIError: LocalizedError {
@@ -19,7 +21,7 @@ enum CLIError: LocalizedError {
         case .launch(let message):
             return "Could not start the Open Gears helper: \(message)"
         case .timedOut:
-            return "The operation took longer than 45 seconds and was stopped. Unplug and reconnect the adapter before trying again."
+            return "The operation timed out and was stopped. Reconnect the adapter and refresh the bicycle before trying again."
         case .command(let message):
             return message.isEmpty ? "The helper did not complete the operation." : message
         }
@@ -32,14 +34,16 @@ enum CLIRunner {
         executable: URL,
         arguments: [String],
         timeout: TimeInterval = 45,
-        terminationGrace: TimeInterval = 15
+        terminationGrace: TimeInterval = 25,
+        allowFailure: Bool = false
     ) async throws -> CLIResult {
         try await Task.detached(priority: .userInitiated) {
             try runBlocking(
                 executable: executable,
                 arguments: arguments,
                 timeout: timeout,
-                terminationGrace: terminationGrace
+                terminationGrace: terminationGrace,
+                allowFailure: allowFailure
             )
         }.value
     }
@@ -48,7 +52,8 @@ enum CLIRunner {
         executable: URL,
         arguments: [String],
         timeout: TimeInterval,
-        terminationGrace: TimeInterval
+        terminationGrace: TimeInterval,
+        allowFailure: Bool
     ) throws -> CLIResult {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             throw CLIError.missingHelper(executable.path)
@@ -77,7 +82,8 @@ enum CLIRunner {
         timer.schedule(deadline: .now() + timeout)
         timer.setEventHandler {
             state.requestTermination()
-            // The helper gets ten seconds to end bicycle service sessions.
+            // An interrupted write may need a readback, service cleanup and
+            // adapter reset before releasing USB. Allow the full cleanup budget.
             timeoutQueue.asyncAfter(deadline: .now() + terminationGrace) {
                 state.forceTerminationIfNeeded()
             }
@@ -105,14 +111,18 @@ enum CLIRunner {
         try? outputPipe.fileHandleForReading.close()
         try? errorPipe.fileHandleForReading.close()
 
-        if state.didTimeOut { throw CLIError.timedOut }
         let (output, errorOutput) = collector.contents()
+        let timedOut = state.didTimeOut
+        if timedOut && (!allowFailure || process.terminationReason != .exit || output.isEmpty) {
+            throw CLIError.timedOut
+        }
         let diagnostic = String(decoding: errorOutput, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard process.terminationReason == .exit && process.terminationStatus == 0 else {
+        let succeeded = !timedOut && process.terminationReason == .exit && process.terminationStatus == 0
+        guard succeeded || (allowFailure && process.terminationReason == .exit) else {
             throw CLIError.command(diagnostic)
         }
-        return CLIResult(output: output, diagnostic: diagnostic)
+        return CLIResult(output: output, diagnostic: diagnostic, succeeded: succeeded, timedOut: timedOut)
     }
 }
 

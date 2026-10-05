@@ -1,4 +1,4 @@
-// Package bike implements read-only Di2 discovery and model-specific settings.
+// Package bike implements Di2 discovery and model-specific paddle settings.
 package bike
 
 import (
@@ -36,25 +36,28 @@ type Paddles struct {
 }
 
 type Unit struct {
-	Slot            byte     `json:"slot"`
-	Series          byte     `json:"series"`
-	Number          byte     `json:"number"`
-	Part            byte     `json:"part"`
-	PartKnown       bool     `json:"part_known"`
-	Model           string   `json:"model"`
-	FirmwareVersion string   `json:"firmware_version,omitempty"`
-	Paddles         *Paddles `json:"paddles,omitempty"`
-	ReadErrors      []string `json:"read_errors,omitempty"`
+	Slot                byte     `json:"slot"`
+	Series              byte     `json:"series"`
+	Number              byte     `json:"number"`
+	Part                byte     `json:"part"`
+	PartKnown           bool     `json:"part_known"`
+	Model               string   `json:"model"`
+	FirmwareVersion     string   `json:"firmware_version,omitempty"`
+	Paddles             *Paddles `json:"paddles,omitempty"`
+	ReadErrors          []string `json:"read_errors,omitempty"`
+	PaddleEditSupported bool     `json:"paddle_edit_supported"`
+	PaddleEditReason    string   `json:"paddle_edit_reason"`
 }
 
 type Snapshot struct {
-	CapturedAt      string `json:"captured_at"`
-	Role            string `json:"role"`
-	PCSlot          byte   `json:"pc_slot"`
-	SlotBitmap      string `json:"slot_bitmap"`
-	Units           []Unit `json:"units"`
-	BatteryLevelRaw *byte  `json:"battery_level_raw,omitempty"`
-	Note            string `json:"note"`
+	Adapter         adapter.Location `json:"adapter"`
+	CapturedAt      string           `json:"captured_at"`
+	Role            string           `json:"role"`
+	PCSlot          byte             `json:"pc_slot"`
+	SlotBitmap      string           `json:"slot_bitmap"`
+	Units           []Unit           `json:"units"`
+	BatteryLevelRaw *byte            `json:"battery_level_raw,omitempty"`
+	Note            string           `json:"note"`
 }
 
 func unitReply(f protocol.Frame, slot, group, command byte, minLength int) ([]byte, bool, error) {
@@ -349,14 +352,14 @@ func label(v byte) string {
 }
 
 func decodePaddles(u Unit, raw []byte) (*Paddles, error) {
-	n, err := paddleLength(u)
+	_, err := paddleLength(u)
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) < n {
+	if len(raw) < 2 {
 		return nil, fmt.Errorf("short paddle reply: %x", raw)
 	}
-	p := &Paddles{A: raw[0] >> 4, B: raw[0] & 15, Raw: hex.EncodeToString(raw[:n])}
+	p := &Paddles{A: raw[0] >> 4, B: raw[0] & 15, Raw: hex.EncodeToString(raw)}
 	c, s := raw[1]>>4, raw[1]&15
 	p.C, p.S = &c, &s
 	p.Labels = map[string]string{"a": label(p.A), "b": label(p.B), "c": label(c), "s": label(s)}
@@ -372,7 +375,7 @@ func (s *Session) Inspect(ctx context.Context) (snapshot Snapshot, result error)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	snapshot = Snapshot{CapturedAt: time.Now().UTC().Format(time.RFC3339), PCSlot: s.pcSlot, SlotBitmap: hex.EncodeToString(bitmap), Units: []Unit{}, Note: "Live read-only settings. X=A, Y=B on identified road shifters; battery level is raw, not a percentage."}
+	snapshot = Snapshot{CapturedAt: time.Now().UTC().Format(time.RFC3339), PCSlot: s.pcSlot, SlotBitmap: hex.EncodeToString(bitmap), Units: []Unit{}, Note: "Assignments read from identified components. X=A, Y=B; battery level is raw, not a percentage."}
 	snapshot.Role = "slave"
 	if s.master {
 		snapshot.Role = "master"
@@ -414,7 +417,7 @@ func (s *Session) Inspect(ctx context.Context) (snapshot Snapshot, result error)
 			u.FirmwareVersion = version(fw)
 		}
 		if n, err := paddleLength(u); err == nil && u.PartKnown {
-			raw, err := s.command(ctx, slot, 4, 0x14, make([]byte, n), n)
+			raw, err := s.command(ctx, slot, 4, 0x14, make([]byte, n), 2)
 			if err != nil {
 				u.ReadErrors = append(u.ReadErrors, err.Error())
 			} else {
@@ -438,6 +441,7 @@ func (s *Session) Inspect(ctx context.Context) (snapshot Snapshot, result error)
 	if len(snapshot.Units) == 0 {
 		return snapshot, fmt.Errorf("no bicycle components detected; check the bicycle-side plug and battery")
 	}
+	annotatePaddleSupport(&snapshot)
 	return snapshot, nil
 }
 
@@ -449,11 +453,14 @@ func Inspect(ctx context.Context, options adapter.Options) (snapshot Snapshot, r
 		return Snapshot{}, err
 	}
 	defer func() { result = errors.Join(result, c.Close()) }()
-	c, err = c.Prepare(ctx, options)
+	defer func() { result = errors.Join(result, c.EndBicycle(context.Background())) }()
+	c, err = c.PrepareBicycle(ctx, options)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	s := New(c)
 	defer func() { result = errors.Join(result, s.Close()) }()
-	return s.Inspect(ctx)
+	snapshot, result = s.Inspect(ctx)
+	snapshot.Adapter = c.Location()
+	return snapshot, result
 }

@@ -1,6 +1,16 @@
 # Open Gears
 
-A native Mac app and Go CLI for the Shimano SM-BCR2 USB charger/interface used by older Di2 bicycles. USB discovery, controller initialization, and adapter information work on the tested Mac. Bicycle discovery now reaches a ready adapter and reads its slot bitmap, which reports **zero bicycle components on the current connection**. Component and paddle reads remain experimental.
+Install on **macOS Tahoe 26 or later**:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jgeurts/open-gears/v0.1.0-alpha.3/scripts/install.sh | sh
+```
+
+The installer chooses Apple silicon or Intel, verifies the release checksum, and installs **Open Gears.app** in `~/Applications`. It preserves an existing installation. Open the app from that folder; first-launch guidance is below.
+
+A native Mac app and Go CLI for the Shimano SM-BCR2 USB charger/interface used by older Di2 bicycles. Connect the bicycle, see its identified shifters, and change their X/Y shift assignments with a before/after preview and readback verification.
+
+Adapter access is verified on macOS. Component reads and paddle writes are experimental: the current hardware connection still reports **zero bicycle components**, so no actual shifter setting has been changed or verified yet.
 
 This project is independent of Shimano and Specialized. The bicycle's model does not establish which Di2 components are installed.
 
@@ -15,7 +25,8 @@ This project is independent of Shimano and Specialized. The bicycle's model does
 | Prepare the adapter and read its component slot bitmap | Verified in adapter-master mode; the current connection reports zero bicycle components |
 | Read bicycle component information and paddle assignments | Implemented, experimental; no actual component or paddle result has been verified |
 | Analyze captures and decode serial frames offline | Implemented; parser and protocol tests use synthetic data |
-| Change paddle assignments or other stored settings | Not implemented |
+| Change X/Y paddle assignments on identified conventional road/GRX shifters | Implemented with preview, fresh identity/settings checks, and readback; synthetic tests only |
+| Change hood/sprinter buttons, shift modes, or other settings | Not implemented; existing extra-button assignments are preserved |
 | Update adapter or bicycle flash firmware; run error checks | Not implemented |
 
 The adapter's firmware version is not the bicycle components' firmware version. Loading the USB-controller RAM image is a separate operation from updating flash firmware.
@@ -28,19 +39,25 @@ The Mac app and packaged CLI require **macOS Tahoe 26 or later**. Choose the App
 
 The app has **no Developer ID signature or notarization**; local packaging uses an ad hoc signature. macOS may block the first launch. After checking the download's checksum and source, use the per-app **Open Anyway** option in System Settings → Privacy & Security. Do not disable Gatekeeper globally.
 
-1. Connect SM-BCR2 to a USB data port and choose **Check USB connection**.
-2. Under **Adapter support file**, use **Choose file…** to select your local `umpf3410.i51`.
-3. Choose **Read adapter information** to initialize the controller if needed and read its version.
-4. **Read bicycle**, marked experimental, prepares the adapter and attempts component discovery and paddle reads. The current hardware test reports no bicycle units; it has not established why none are visible.
-5. Use **Export JSON** to save results for troubleshooting.
+1. Plug SM-BCR2 into the bicycle's charging port and a USB data port on the Mac, then choose **Connect bicycle**.
+2. If prompted, open the **Settings gear** and choose your local `umpf3410.i51` adapter support file. The selection is remembered; the controller image is loaded again when needed.
+3. The app reads the bicycle and shows the current X/Y assignments on each identified shifter. It distinguishes **USB adapter attached** from **Bicycle connected**.
+4. Choose a new function for X or Y. The original dropdown option is marked **(current)**. Review the visible current → requested changes, then choose **Apply changes**.
+5. A verified result means the assignments were read back and matched. For an uncertain or partial result, refresh before trying another change; the app does not automatically repeat a write.
+
+Supported initial targets are left/right ST-R785, ST-6870, ST-R8050, ST-R8070, ST-RX815, ST-R9150, and ST-R9170 with an identified SM-BTR2 or BT-DN110 controller. Adapter firmware must be 3.0.0 or later. New X/Y assignments are front-up, front-down, rear-up, or rear-down. Existing hood/sprinter/dummy channels and any untouched model-specific paddle function are preserved. Unsupported components show the reason editing is unavailable.
+
+The **Settings gear** contains the adapter support-file controls. **Advanced connection details** contains adapter firmware and diagnostic exports. Firmware updates and other setting editors are not available.
 
 Only one app or CLI command should own the adapter at a time. See the recovery steps below if a bicycle read or cleanup fails.
 
-Actual Mac app screenshots from the connected test adapter:
+Mac app screenshots:
 
-![SM-BCR2 connection and actual adapter firmware 3.0.1](docs/screenshots/adapter.png)
+![Actual connected adapter with no bicycle components detected](docs/screenshots/app.png)
 
-![Experimental bicycle read showing the current no-components diagnostic](docs/screenshots/app.png)
+![Paddle editing preview using clearly labeled synthetic components](docs/screenshots/paddles-demo.png)
+
+The editor screenshot uses synthetic components to demonstrate the workflow. It is not a result from the current bicycle connection.
 
 ## Obtain the controller image
 
@@ -69,6 +86,12 @@ The app and CLI reject other images. The image is proprietary and is not include
 
 CLI release archives contain `open-gears` and its adjacent `lib` directory. Keep them together. macOS is the primary target; Linux CLI builds are secondary and have not been tested with the bicycle. Windows support is not implemented.
 
+The installed Mac app also contains the CLI:
+
+```sh
+"$HOME/Applications/Open Gears.app/Contents/MacOS/open-gears" version
+```
+
 ```sh
 # Report the build version and commit.
 ./open-gears version
@@ -82,6 +105,16 @@ CLI release archives contain `open-gears` and its adjacent `lib` directory. Keep
 # Attempt experimental bicycle discovery and paddle reads.
 ./open-gears bike inspect --firmware /path/to/umpf3410.i51
 
+# Build a preview for an observed shifter slot. X=A, Y=B.
+# Replace 2 with the slot returned by your bicycle read.
+./open-gears bike paddles plan --slot 2 --a rear-down --b rear-up \
+  --firmware /path/to/umpf3410.i51 > paddle-plan.json
+
+# Inspect the preview, then apply exactly that plan.
+cat paddle-plan.json
+./open-gears bike paddles apply --plan paddle-plan.json \
+  --firmware /path/to/umpf3410.i51
+
 # Save an adapter trace in a new file.
 ./open-gears adapter info --firmware /path/to/umpf3410.i51 --trace adapter.jsonl
 
@@ -91,6 +124,8 @@ CLI release archives contain `open-gears` and its adjacent `lib` directory. Keep
 ```
 
 Live command results are JSON. Errors go to stderr with a nonzero exit status. `adapter initialize --firmware FILE` only loads controller RAM; `adapter info` handles initialization automatically when the adapter is in boot mode. Bicycle reads also reset and prepare the adapter, reconnecting and restoring its controller image if needed. If multiple adapters are connected, use `--bus N --address N` from `devices`. USB addresses can change after initialization.
+
+A paddle plan pins the physical USB port, component identity, firmware, and current assignments. Apply checks every requested shifter again before the first write. A stale preview is rejected. Apply can return JSON describing verified, unchanged, partial, or unknown outcomes even with a nonzero exit status; retain that output. Multi-shifter changes are sequential, not atomic. After a partial or uncertain result, read the bicycle again before creating another preview. To restore old assignments, create a fresh inverse preview from the new read; never replay an old plan blindly.
 
 `--trace` creates a new private JSONL file and refuses to overwrite an existing file. Controller firmware-upload payloads are excluded. If trace storage fails, USB communication and session cleanup continue, then the command reports the incomplete trace. Other trace contents can identify components, so review them before sharing. Imported external captures are not automatically stripped of firmware data.
 
@@ -111,7 +146,7 @@ Install Go **1.24 or later**. Mac builds target **macOS Tahoe 26 or later**; App
 ```sh
 git clone https://github.com/jgeurts/open-gears.git
 cd open-gears
-git checkout v0.1.0-alpha.2
+git checkout v0.1.0-alpha.3
 make build
 ./bin/open-gears devices
 
@@ -120,7 +155,7 @@ make app
 open 'bin/Open Gears.app'
 ```
 
-`make check` runs formatting checks, vet, Go race tests, and native Mac helper tests. `make package` creates distributable archives in `dist`. Build entry points use `scripts/build.sh`; compiled files and private dependencies stay outside version control.
+`make check` runs formatting checks, vet, Go race tests, native Mac helper tests, and isolated installer tests. `make package` creates distributable archives in `dist`. Build entry points use `scripts/build.sh`; compiled files and private dependencies stay outside version control.
 
 Mac packages dynamically link libusb **1.0.30** with the upstream shutdown fix from [PR #1780](https://github.com/libusb/libusb/pull/1780), commit `94a5224`. The release includes the corresponding patched libusb source archive and license. See [CONTRIBUTING.md](CONTRIBUTING.md) for release checks.
 

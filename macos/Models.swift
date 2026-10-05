@@ -56,6 +56,7 @@ struct BikeSnapshot: Decodable, Sendable {
     let units: [BikeUnit]
     let batteryLevelRaw: Int?
     let note: String
+    let adapter: AdapterIdentity?
 
     var date: Date? { ISO8601DateFormatter().date(from: capturedAt) }
     var readErrorCount: Int { units.reduce(0) { $0 + ($1.readErrors?.count ?? 0) } }
@@ -64,7 +65,7 @@ struct BikeSnapshot: Decodable, Sendable {
         case capturedAt = "captured_at"
         case pcSlot = "pc_slot"
         case slotBitmap = "slot_bitmap"
-        case units, note
+        case units, note, adapter
         case batteryLevelRaw = "battery_level_raw"
     }
 }
@@ -79,7 +80,16 @@ struct BikeUnit: Decodable, Identifiable, Sendable {
     let firmwareVersion: String?
     let paddles: PaddleSettings?
     let readErrors: [String]?
+    let paddleEditSupported: Bool?
+    let paddleEditReason: String?
 
+    var canEditPaddles: Bool { paddleEditSupported == true && paddles != nil }
+    var shifterName: String {
+        guard number == 1, partKnown, model.hasPrefix("ST-") else { return model }
+        if model.hasSuffix("-L") { return "Left shifter" }
+        if model.hasSuffix("-R") { return "Right shifter" }
+        return model
+    }
     var id: Int { slot }
     var role: String {
         switch number {
@@ -107,6 +117,8 @@ struct BikeUnit: Decodable, Identifiable, Sendable {
         case partKnown = "part_known"
         case firmwareVersion = "firmware_version"
         case readErrors = "read_errors"
+        case paddleEditSupported = "paddle_edit_supported"
+        case paddleEditReason = "paddle_edit_reason"
     }
 }
 
@@ -134,6 +146,7 @@ enum ReportKind: String, CaseIterable, Identifiable, Sendable {
     case usb = "USB connection"
     case adapter = "Adapter information"
     case bicycle = "Bicycle snapshot"
+    case paddles = "Paddle apply result"
 
     var id: String { rawValue }
     var filename: String {
@@ -141,6 +154,100 @@ enum ReportKind: String, CaseIterable, Identifiable, Sendable {
         case .usb: return "open-gears-usb.json"
         case .adapter: return "open-gears-adapter.json"
         case .bicycle: return "open-gears-bicycle.json"
+        case .paddles: return "open-gears-paddle-result.json"
+        }
+    }
+}
+
+
+struct AdapterIdentity: Codable, Equatable, Sendable {
+    let bus: Int
+    let address: Int?
+    let path: [Int]
+}
+
+enum PaddleKey: String, Sendable {
+    case x, y
+    var caption: String { self == .x ? "X" : "Y" }
+}
+
+enum PaddleFunction {
+    static let standard = [0, 1, 2, 3]
+
+    static func label(_ value: Int) -> String {
+        switch value {
+        case 0: return "Front shift up"
+        case 1: return "Front shift down"
+        case 2: return "Rear shift up"
+        case 3: return "Rear shift down"
+        case 15: return "Unassigned"
+        default: return "Model-specific assignment (\(value))"
+        }
+    }
+}
+
+struct PaddleDraft: Equatable, Sendable {
+    var a: Int
+    var b: Int
+}
+
+struct PendingPaddleChange: Identifiable, Sendable {
+    let slot: Int
+    let model: String
+    let key: PaddleKey
+    let before: Int
+    let after: Int
+    var id: String { "\(slot):\(key.rawValue)" }
+}
+
+struct PaddlePlan: Encodable, Sendable {
+    let version = 1
+    let adapter: PhysicalAdapter
+    let changes: [Change]
+
+    struct PhysicalAdapter: Encodable, Sendable {
+        let bus: Int
+        let path: [Int]
+    }
+
+    struct Change: Encodable, Sendable {
+        let slot: Int
+        let series: Int
+        let number: Int
+        let part: Int
+        let firmwareVersion: String
+        let beforeRaw: String
+        let a: Int
+        let b: Int
+
+        enum CodingKeys: String, CodingKey {
+            case slot, series, number, part, a, b
+            case firmwareVersion = "firmware_version"
+            case beforeRaw = "before_raw"
+        }
+    }
+}
+
+struct PaddleApplyResult: Decodable, Sendable {
+    let status: String
+    let changes: [Change]
+    let snapshot: BikeSnapshot?
+    let error: String?
+
+    struct Change: Decodable, Sendable {
+        let slot: Int
+        let status: String
+        let beforeRaw: String
+        let requestedRaw: String
+        let actualRaw: String?
+        let error: String?
+        let warning: String?
+
+        enum CodingKeys: String, CodingKey {
+            case slot, status, error, warning
+            case beforeRaw = "before_raw"
+            case requestedRaw = "requested_raw"
+            case actualRaw = "actual_raw"
         }
     }
 }

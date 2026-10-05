@@ -21,11 +21,17 @@ commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || printf unknown)
 "$root/scripts/build-libusb.sh"
 . "$root/scripts/go-env.sh"
 cd "$root"
-mkdir -p bin/lib
+mkdir -p bin/lib build
 if test "$os" = linux; then
     export CGO_LDFLAGS="$CGO_LDFLAGS -Wl,-rpath,\$ORIGIN/lib"
 fi
-go build -trimpath -ldflags="-s -w -X main.version=$version -X main.commit=$commit" -o bin/open-gears ./cmd/open-gears
+# Go may reuse an existing executable with the same build ID even after macOS
+# packaging changed its load commands. Link to a fresh path before patching.
+cli_temp=$(mktemp "$root/build/open-gears.XXXXXX")
+trap 'rm -f "$cli_temp"' 0
+trap 'exit 1' HUP INT TERM
+go build -trimpath -ldflags="-s -w -X main.version=$version -X main.commit=$commit" -o "$cli_temp" ./cmd/open-gears
+mv "$cli_temp" bin/open-gears
 if test "$os" = darwin; then
     cp "$prefix/lib/libusb-1.0.0.dylib" bin/lib/
     install_name_tool -id '@rpath/libusb-1.0.0.dylib' bin/lib/libusb-1.0.0.dylib

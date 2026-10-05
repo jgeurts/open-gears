@@ -48,8 +48,11 @@ func run(args []string, w io.Writer) error {
 		return runAdapter(args[1:], w)
 	}
 	if len(args) > 0 && args[0] == "bike" {
+		if len(args) > 1 && args[1] == "paddles" {
+			return runPaddles(args[2:], w)
+		}
 		if len(args) < 2 || args[1] != "inspect" {
-			return fmt.Errorf("use bike inspect")
+			return fmt.Errorf("use bike inspect or bike paddles plan/apply")
 		}
 		return runAdapter(append([]string{"bike-inspect"}, args[2:]...), w)
 	}
@@ -81,6 +84,8 @@ const help = `open-gears — Shimano SM-BCR2 tools for macOS and Linux
   adapter initialize --firmware FILE Load OEM USB-controller firmware into RAM
   adapter info [--firmware FILE]     Read adapter link and firmware information
   bike inspect [--firmware FILE]     Read component identities and paddle settings
+  bike paddles plan --slot N --a ACTION --b ACTION  Preview X/Y changes
+  bike paddles apply --plan FILE     Apply a preview and verify assignments
   capture fields                    Show Wireshark export command
   capture import FILE [--bus N --address N]  Import TSV to JSONL on stdout
   capture analyze FILE              Summarize normalized JSONL events
@@ -88,6 +93,7 @@ const help = `open-gears — Shimano SM-BCR2 tools for macOS and Linux
   protocol decode HEX               Decode legacy serial frames offline
   version                           Show build version and commit
 
+Actions: front-up, front-down, rear-up, rear-down. Omit --a or --b to preserve it.
 Adapter options: --bus N --address N --trace NEW_FILE
 Controller firmware: umpf3410.i51 from the SM-BCR2 Windows driver.
 Only the documented SHA256 is accepted. It is not bicycle firmware.

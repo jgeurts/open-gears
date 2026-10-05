@@ -15,7 +15,9 @@ On 2026-10-04, a live macOS probe successfully loaded the recognized bridge imag
 
 A later live run on the same date added the recovered reset/reconnection/power-unlock preparation and got past the earlier mode-transition failure. The role probe (`03`, payload `00`) returned `23`, payload `10`, selecting adapter-master mode. Explicit master selection (`03/20`) returned `23/00`; the state query returned `24/a0`, ready DCAS-A/master with PC slot 0. Adapter slot query `1b` returned `3b`, payload `00 00 00 00`: **zero bicycle components were visible on that connection**. This does not establish that a physical connector was unplugged or identify the cause.
 
-Component identity, paddle assignments, battery-level reads, and actual component service-session startup/cleanup remain experimental and unverified live, because the slot bitmap was empty. Stored-setting writes, adapter/component flash updates, and error checks are not exposed. Queries to an occupied component require transient service mode; failed cleanup requires disconnecting SM-BCR2 from the bike and USB and confirming that normal bicycle operation resumes.
+The completed power-preparation flow was then exercised on firmware 3.0.1: `1a/01` returned `01 00`, status `1a/02` returned `02 02`, and supply start `1a/03` returned `03 00`. The first master-role result triggered the full preparation retry; both passes succeeded. Discovery still returned an empty bitmap. Final adapter reset was acknowledged and USB close completed without error. This verifies adapter power commands and cleanup on this connection, not an occupied bicycle service session.
+
+Component identity, paddle assignments, battery-level reads, and actual component service-session startup/cleanup remain experimental and unverified live, because the slot bitmap was empty. X/Y paddle changes now have a restricted preview/apply path with identity checks and readback; live setting writes remain unverified. Adapter/component flash updates and error checks are not exposed. Queries to an occupied component require transient service mode; failed cleanup requires disconnecting SM-BCR2 from the bike and USB and confirming that normal bicycle operation resumes.
 
 ## Sources and reproducibility
 
@@ -37,6 +39,7 @@ The archived binaries were obtained from [BetterShifting's E-Tube archive](https
 | Extracted umpf3410.i51 | `2a392186cf3d93b6a56514cdcd483a26097bf20b2bfc744bad7bb2fa1fd8bcd6` |
 | Extracted smpce1com.dll | `c34eab626b4d31bb5dd1084569902fe43f0db205ea4572d16ec472e4c7c61e2b` |
 | Extracted etubedatalinks.dll | `814d8096d9f6e5552d8131ff840d3bf407b0f0b089c9a0a821cbb34f141e5ab5` |
+| Extracted e_tube_project.exe | `e0f16523dcaef90aedd8f271161f7f8747bb7109414ce55950ce7bffdb3979fb` |
 
 Extraction did not run the Windows application or installer. The InstallShield overlay contains a Windows Installer package whose `Data1.cab` holds the assemblies. Transport behavior is in `smpce1com.dll` (`Common`, `DataLinksMain`, `WinSerialPort`, `DataLinksPce`); unit discovery and customization are in `etubedatalinks.dll` (`EtubeDataLinksDccCommand`, `EtubeDataLinksUnitCommand`, `SwitchFunctionalUnit`, and model definitions). Method names are locators, not redistributed source.
 
@@ -195,6 +198,10 @@ After successful reset, wait 1 second, then send power-limit unlock: control `1a
 
 This preparation was identified after the initial bicycle-mode timeout. Adding it allowed the later live run to reach ready master mode and read the empty slot bitmap. Both resets returned `30/00`; power unlock returned `3a/01 00`. A first adapter-info probe works without this preparation. The native `Prepare` step follows the same physical USB port through re-enumeration and reopens/reloads the recognized controller image if necessary. Recovery experiments must distinguish an adapter application reset from a host USB reset and keep their traces separate.
 
+Normal bicycle discovery also needs the recovered application's power-detection phase. For SM-BCR2 firmware 3.0.0 and later, wait 3 seconds after initial preparation, send `1a/01`, then query `1a/02`. The second response byte is the status: `01` is ready, `02` requires supply start `1a/03`, `03` and `04` indicate charging states, and `05` is busy. Operations `01` and `03` require at least two response bytes with byte 1 zero. The recovered attempts have a 5-second deadline and at least 2 seconds between starts, with three attempts normally and up to 31 after busy status. Wait 1 second after the power phase before the `03/00` role probe. If SM-BCR2 reports master, repeat reset, unlock, and this power phase once. `PrepareBicycle` follows this sequence and requires the OEM's normal-connection adapter minimum of 3.0.0; this is separate from component firmware compatibility.
+
+The live 3.0.1 adapter returned `3a/02 02`, accepted supply start with `3a/03 00`, and still reported an empty bitmap on that probe. Thus omitting supply start is a real preparation gap, but its presence alone does not prove why components were absent. End component service sessions first, then send adapter reset `10` with a fresh bounded cleanup context, and finally close the UART and USB resources. The live final reset returned `30/00` and USB close succeeded. These power and reset operations change transient adapter state, not stored paddle assignments.
+
 ### Discovery and session order
 
 After link preparation and role selection, the recovered application has two discovery routes. The implementation handles both:
@@ -245,6 +252,8 @@ Do not assume the brand/model/year of the bicycle proves which components are fi
 
 **Recovered:** group `04`, command `14` (`ST_CND_GET`) reads assignments. Two-channel models send one zero parameter; models with C/S channels, including dummy channels, send four zeros. Decode byte 0 high nibble as A, low nibble as B; byte 1 high nibble as C, low nibble as S.
 
+The GET request length is not the minimum reply length. The recovered loader accepts at least one byte and decodes C/S when a second byte is present. For the four-channel models below, this implementation requires two reply bytes so every channel is available to preserve; it retains any trailing reply bytes as raw diagnostics.
+
 Writing uses group `04`, command `10` (`ST_CND_SET`):
 
 ```text
@@ -278,6 +287,22 @@ Default road assignments are left X=0/Y=1 and right X=3/Y=2. They are defaults, 
 
 Other relevant identity examples: SM-BTR2 `05/00`, BT-DN110 `11/00`, FD-6870 `07/03`, RD-6870 `07/04` (part 0 SS/1 GS), FD-R8050 `14/03`, RD-R8050 `14/04` (part 0 SS/1 GS/3 RX805-GS), FD-RX815 `16/03/00`, RD-RX815 `16/04/04`, RD-RX817 `16/04/01`, EW-WU111 `10/08`, EW-WU101 `11/08`. These are recovered lookup facts, not a complete compatibility matrix.
 
+### Preview, apply, and recovery
+
+**Recovered:** `SwitchFunctionalUnit.SetSwitchCondition` preserves unspecified channels and sends one SET command. `UnitCommandSetting` permits a success reply with zero parameter bytes: outgoing `48 slot 04 10 AB CS 00 00` expects incoming `48 slot 04 12`; `04/13` is an error reply. The application UI's `Customize.SwitchSetProgressPanel` calls that setter and then collects log data. There is no separate save/commit command or reset in that apply sequence. These are observations of the fingerprinted E-Tube Project 3.4.5 assemblies, not live persistence verification.
+
+**Implemented restriction:** editing is limited to the identified models in the table, with a successfully read firmware version and current assignments. The inventory must contain an identified SM-BTR2 or BT-DN110 controller; an additional unknown controller with unit number `00` disables editing. The controller may occupy a nonzero slot when the adapter is master. This establishes a conventional battery-controller context without treating an unknown drive system as a road bicycle. It is an application support boundary, not a claim that other systems cannot use SET.
+
+Editing also excludes slot 31. The recovered slave cleanup explicitly visits occupied slots 1–30 and then slot 0, separately excluding the observed PC slot. This establishes the implemented cleanup range; it does not establish that slot 31 is always reserved for the PC. Discovery may report that slot, but writing it requires separate service-cleanup evidence.
+
+New X/Y assignments are restricted to values `0`–`3`; an unchanged X/Y value anywhere in `0`–`f` is preserved. C/S are preserved, including dummy and non-customizable channels. OEM condition patterns S1/S15 support the four basic shift functions in conventional Di2 operation. No separate minimum firmware version was found for those basic functions; the recovered `3.1.0` shifter threshold concerns D-Fly, which has additional system checks and is not offered here.
+
+`bike paddles plan --slot N --a ACTION --b ACTION` reads the bicycle and emits a version 1 JSON preview; either action may be omitted to preserve that paddle. The app can build the same preview from its most recent inspection. `bike paddles apply --plan FILE` validates bounded JSON before opening USB, pins the observed physical bus/port path through adapter preparation, re-reads every requested shifter, and checks identity, firmware, and assignments before any SET. A changed precondition requires a new preview. Comparison uses the first two GET reply bytes: the OEM ignores trailing GET bytes and explicitly sends zeros in the corresponding SET positions. USB addresses may change during controller initialization, so they are informational rather than the plan's physical identity.
+
+An unchanged preview sends no SET. Each changed shifter receives at most one SET, followed by an independent bounded GET even if the caller was cancelled or the acknowledgment was lost. Matching readback verifies the requested assignments and retains any ambiguous write error as a warning; original readback establishes unchanged settings; a mismatch or unavailable readback prevents a success claim. Multi-shifter changes are sequential, not atomic. Processing stops on failure and reports already verified changes separately. Service cleanup, final adapter reset, and USB-close failures remain visible and prevent a global `verified` result.
+
+To restore previous assignments, read the bicycle again and create a new preview using the saved pre-change values. Do not automatically replay a timed-out SET or blindly roll back another shifter. If an original model-specific value cannot be selected by this restricted editor, preserve the saved raw report and use the appropriate supported configuration tool for that function. A failed service cleanup still requires disconnect recovery. Actual component writes and persistence after a full disconnect/reconnect require live validation; fixture tests cannot establish them.
+
 ## Additional recovered capabilities
 
 The application exposes far more than paddles. The following command pairs are useful next steps; support and valid ranges vary by unit/firmware, so they are a research catalog rather than authorization to execute writes.
@@ -303,7 +328,7 @@ A value named SOC/voltage level in the application is not necessarily a percenta
 
 ## Boundaries and remaining work
 
-- TI USB startup and adapter queries succeeded live on macOS with the recognized Shimano bridge image. Additional host platforms, interrupt handling, and exceptional disconnect behavior remain unverified.
+- TI USB startup, interrupt handling, and adapter queries succeeded live on macOS with the recognized Shimano bridge image. Additional host platforms and exceptional disconnect behavior remain unverified.
 - Mac app, CLI, and bundled USB-library builds target macOS Tahoe 26 or later, on Apple silicon and Intel.
 - OEM link preparation and adapter-master mode selection also succeeded live, followed by a zero component bitmap. The connection's physical state and reason for missing units are unconfirmed. Both role routes are implemented; neither has produced a genuine component or paddle read yet.
 - Framing, service mode, discovery, identity queries, and paddle formats are directly recovered from one archived application version. They do not establish support for every Di2 generation or firmware release.

@@ -56,6 +56,9 @@ jobs:
           else
             export VERSION="dev-${GITHUB_SHA:0:7}"
           fi
+          # Repeating the build also checks that packaging never reuses an
+          # executable whose library load commands were already patched.
+          make build
           make package
           ./bin/open-gears version
           ./bin/open-gears protocol decode bb25300100aabb

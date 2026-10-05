@@ -8,571 +8,390 @@ struct OpenGearsApp: App {
     var body: some Scene {
         WindowGroup("Open Gears") {
             ContentView(model: model)
-                .frame(minWidth: 920, minHeight: 660)
+                .frame(minWidth: 720, minHeight: 620)
         }
-        .defaultSize(width: 1080, height: 780)
-        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 860, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) { }
-            CommandMenu("Connection") {
-                Button("Check USB Connection") { model.discover() }
+            CommandMenu("Bicycle") {
+                Button("Connect Bicycle") { model.connectBicycle() }
                     .keyboardShortcut("r", modifiers: .command)
+                    .disabled(model.isBusy)
+                Button("Apply Paddle Changes") { model.applyPaddleChanges() }
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(!model.canApply)
+                Divider()
+                Button("Check USB Connection") { model.discover() }
                     .disabled(model.isBusy)
                 Button("Choose Adapter Support File…") { model.chooseSupportFile() }
                     .disabled(model.isBusy)
-                Divider()
                 Button("Read Adapter Information") { model.readAdapter() }
-                    .disabled(!model.canRead)
-                Button("Read Bicycle — Experimental") { model.readBicycle() }
                     .disabled(!model.canRead)
             }
         }
     }
 }
 
-private enum Theme {
-    static let accent = Color(red: 0.05, green: 0.54, blue: 0.47)
-    static let sidebar = Color(red: 0.09, green: 0.14, blue: 0.16)
-    static let sidebarMuted = Color(red: 0.64, green: 0.73, blue: 0.74)
-    static let sidebarAccent = Color(red: 0.43, green: 0.86, blue: 0.73)
-    static let card = Color(nsColor: .controlBackgroundColor)
-    static let border = Color.primary.opacity(0.08)
-    static let warning = Color(red: 0.62, green: 0.39, blue: 0.04)
-}
-
 struct ContentView: View {
     @ObservedObject var model: AppModel
+    @State private var showsAdvanced = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-                .frame(width: 268)
+        VStack(spacing: 0) {
+            connectionBar
+            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    header
-                    if model.isBusy { activity }
-                    if let error = model.errorMessage { errorCard(error) }
-                    if let notice = model.notice {
-                        Label(notice, systemImage: "info.circle")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .accessibilityLabel("Notice: \(notice)")
+                    if model.isBusy {
+                        HStack(spacing: 12) {
+                            ProgressView().controlSize(.small)
+                            Text(model.activity)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("In progress: \(model.activity)")
                     }
-                    connectionCard
-                    bicycleSection
-                    footer
+                    if let error = model.friendlyErrorMessage { errorMessage(error) }
+                    if let notice = model.notice {
+                        Label(notice, systemImage: model.applyVerified ? "checkmark.circle" : "info.circle")
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .accessibilityLabel(notice)
+                    }
+                    if let bicycle = model.bicycle {
+                        bicycleControls(bicycle)
+                    } else if model.errorMessage == nil {
+                        connectionInstructions
+                    }
+                    capabilities
+                    advanced
                 }
-                .padding(32)
-                .frame(maxWidth: 1040, alignment: .leading)
+                .padding(24)
+                .frame(maxWidth: 920, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .background(Color(nsColor: .windowBackgroundColor))
+            if model.hasPendingChanges { applyBar }
         }
-        .tint(Theme.accent)
         .task {
             if !model.hasCheckedConnection && !model.isBusy { model.discover() }
         }
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            HStack(spacing: 12) {
-                Image(systemName: "bicycle")
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundStyle(Theme.sidebarAccent)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Open Gears")
-                        .font(.system(size: 21, weight: .semibold, design: .rounded))
-                    Text("YOUR DI2 CONNECTION")
-                        .font(.system(size: 9, weight: .semibold))
-                        .tracking(1.6)
-                        .foregroundStyle(Theme.sidebarMuted)
-                }
-            }
-            .padding(.top, 10)
-
-            VStack(alignment: .leading, spacing: 14) {
-                sidebarHeading("01", "USB connection")
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(model.selectedDevice == nil ? Theme.sidebarMuted : Theme.sidebarAccent)
-                        .frame(width: 7, height: 7)
-                        .accessibilityHidden(true)
-                    Text(connectionStatus)
-                        .font(.system(size: 13, weight: .medium))
-                        .accessibilityLabel("Adapter status: \(connectionStatus)")
-                }
-                if model.devices.count > 1 {
-                    Picker("Adapter", selection: Binding(
-                        get: { model.selectedID ?? "" },
-                        set: { model.selectDevice($0) }
-                    )) {
-                        Text("Choose an adapter").tag("")
-                        ForEach(model.devices) { device in
-                            Text(device.connectionName).tag(device.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .disabled(model.isBusy)
-                    .accessibilityLabel("Choose the USB adapter")
-                }
-                Button(action: model.discover) {
-                    Label("Check USB connection", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 3)
-                }
-                .buttonStyle(.bordered)
-                .disabled(model.isBusy)
-                .keyboardShortcut("r", modifiers: .command)
-                .accessibilityHint("Find connected Shimano SM-BCR2 adapters without starting a bicycle session")
-                Text("Use a USB data cable and connect directly to your Mac.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.sidebarMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                sidebarHeading("02", "Adapter support file")
-                if let file = model.supportFile {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "doc.badge.checkmark")
-                            .foregroundStyle(Theme.sidebarAccent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(file.lastPathComponent)
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(2)
-                            Text("Verified by the helper when used")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.sidebarMuted)
-                        }
-                    }
-                    .help(file.path)
-                } else {
-                    Text("Choose umpf3410.i51 from your Shimano Windows driver if the adapter needs it.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.sidebarMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                HStack(spacing: 8) {
-                    Button(model.supportFile == nil ? "Choose file…" : "Change file…", action: model.chooseSupportFile)
-                        .buttonStyle(.bordered)
-                        .disabled(model.isBusy)
-                        .accessibilityLabel("Choose the Shimano umpf3410.i51 adapter support file")
-                    if model.supportFile != nil {
-                        Button(action: model.forgetSupportFile) {
-                            Image(systemName: "xmark")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(Theme.sidebarMuted)
-                        .disabled(model.isBusy)
-                        .help("Forget this file")
-                        .accessibilityLabel("Forget the selected adapter support file")
-                    }
-                }
-                Text("Loaded temporarily into the USB adapter. This is separate from bicycle firmware.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.sidebarMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 18)
-
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Read-only bicycle access", systemImage: "eye")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Settings editing and bicycle firmware updates are not available in this version.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.sidebarMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(24)
-        .foregroundStyle(.white)
-        .background(Theme.sidebar)
-        .environment(\.colorScheme, .dark)
-    }
-
-    private func sidebarHeading(_ number: String, _ title: String) -> some View {
-        HStack(spacing: 8) {
-            Text(number)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(Theme.sidebarAccent)
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-        }
-    }
-
-    private var connectionStatus: String {
-        if let device = model.selectedDevice { return "SM-BCR2 connected · \(device.address)" }
-        if model.devices.count > 1 { return "\(model.devices.count) adapters found" }
-        return model.hasCheckedConnection ? "No adapter selected" : "Connection not checked"
-    }
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Bicycle overview")
-                    .font(.system(size: 30, weight: .semibold, design: .rounded))
-                Text("Inspect your Shimano Di2 connection and controls.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Menu {
-                ForEach(model.availableReports) { kind in
-                    Button(kind.rawValue) { model.export(kind) }
-                }
-            } label: {
-                Label("Export JSON", systemImage: "square.and.arrow.up")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .disabled(model.availableReports.isEmpty || model.isBusy)
-            .accessibilityLabel("Export a captured connection or bicycle report as JSON")
-            .padding(.top, 9)
-        }
-    }
-
-    private var activity: some View {
-        HStack(spacing: 12) {
-            ProgressView().controlSize(.small)
-            Text(model.activity).font(.callout)
-            Spacer()
-            Text("One operation at a time")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(14)
-        .background(Theme.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Busy: \(model.activity)")
-    }
-
-    private func errorCard(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-                .font(.title3)
+    private var connectionBar: some View {
+        HStack(spacing: 16) {
+            Image(systemName: "bicycle")
+                .font(.title)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 7) {
-                Text("The operation needs attention")
-                    .font(.system(size: 13, weight: .semibold))
-                Text(message)
-                    .font(.system(size: 12))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.bicycle != nil && model.bicycleIsCurrent ? "Bicycle connected" : "No bicycle connected")
+                    .font(.title3.weight(.semibold))
+                Text(model.connectionSummary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Button(action: model.dismissError) { Image(systemName: "xmark") }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Dismiss the error message")
-        }
-        .padding(18)
-        .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.red.opacity(0.17), lineWidth: 1))
-    }
-
-    private var connectionCard: some View {
-        SectionCard {
-            HStack(alignment: .top, spacing: 16) {
-                Image(systemName: "cable.connector")
-                    .font(.system(size: 25, weight: .regular))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 48, height: 48)
-                    .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Shimano SM-BCR2")
-                        .font(.system(size: 18, weight: .semibold))
-                    Text(model.selectedDevice == nil ? "Connect the adapter to begin." : "USB charger and bicycle connection adapter")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if model.selectedDevice != nil {
-                    StatusPill(title: "Connected", symbol: "checkmark.circle", color: Theme.accent)
-                }
-            }
-
-            if let device = model.selectedDevice {
-                Divider().padding(.vertical, 5)
-                HStack(alignment: .top, spacing: 24) {
-                    Metric(title: "USB connection", value: "Bus \(device.bus) · address \(device.address)")
-                    Spacer(minLength: 0)
-                    Metric(title: "USB speed", value: device.speed)
-                    Spacer(minLength: 0)
-                    Metric(title: "Adapter firmware", value: model.adapterInfo?.firmwareVersion ?? "Not read yet")
-                }
-                if device.isBehindHub {
-                    Label("A USB hub is in the connection path. Shimano recommends a direct connection.", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(Theme.warning)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if device.needsSupportFile && model.supportFile == nil {
-                    Text("Choose the adapter support file in the sidebar before reading.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                } else if !device.supportsRuntime && !device.needsSupportFile {
-                    Text("This USB layout is not supported yet. Export the USB connection report for investigation.")
-                        .font(.callout)
-                        .foregroundStyle(Theme.warning)
-                }
-                HStack {
-                    Button(action: model.readAdapter) {
-                        Label("Read adapter information", systemImage: "info.circle")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!model.canRead)
-                    Spacer()
-                }
-                if let info = model.adapterInfo {
-                    DisclosureGroup("Adapter reply details") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            DetailRow(title: "Link reply", value: info.linkReplyHex)
-                            DetailRow(title: "Firmware reply", value: info.firmwareReplyHex)
-                            Text(info.note).font(.caption).foregroundStyle(.secondary)
-                        }
-                        .padding(.top, 8)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Connect the USB adapter and its bicycle cable, then use Check USB connection. No bicycle data has been read.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var bicycleSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Components & controls")
-                    .font(.system(size: 19, weight: .semibold, design: .rounded))
-                Spacer()
-                Button(action: model.readBicycle) {
-                    Label(model.bicycle == nil ? "Read bicycle" : "Read again", systemImage: "bicycle")
-                }
+            settingsMenu
+            Button(model.bicycle != nil ? "Refresh bicycle" : "Connect bicycle", action: model.connectBicycle)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(!model.canRead)
-                .accessibilityLabel("Read bicycle components and paddle assignments, experimental")
-            }
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.callout)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Experimental · decoding is unverified")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Check returned component names and paddle labels against your bicycle. Keep it stationary while reading.")
-                        .font(.system(size: 11))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .foregroundStyle(Theme.warning)
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-
-            if let snapshot = model.bicycle {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(snapshot.units.count) components returned")
-                            .font(.system(size: 12, weight: .medium))
-                        if let date = snapshot.date {
-                            Text("Captured \(date.formatted(date: .abbreviated, time: .standard))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                    if snapshot.readErrorCount > 0 {
-                        StatusPill(title: "\(snapshot.readErrorCount) read issues", symbol: "exclamationmark.circle", color: Theme.warning)
-                    }
-                }
-                ForEach(snapshot.units) { unit in ComponentCard(unit: unit) }
-                if let raw = snapshot.batteryLevelRaw {
-                    Label("Battery reading: \(raw) (raw value; not a percentage)", systemImage: "battery.100percent")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                Text(snapshot.note)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                SectionCard {
-                    VStack(spacing: 14) {
-                        Image(systemName: "bicycle")
-                            .font(.system(size: 42, weight: .light))
-                            .foregroundStyle(Theme.accent.opacity(0.65))
-                            .accessibilityHidden(true)
-                        Text("No bicycle snapshot yet")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text("Read your bicycle to see the component identities and paddle assignments it returns.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 370)
-                        if !model.canRead {
-                            Text(model.selectedDevice == nil ? "Start with the USB connection in the sidebar." : "Prepare the adapter support file to continue.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-                }
-            }
+                .disabled(model.isBusy)
+                .keyboardShortcut("r", modifiers: .command)
+                .accessibilityHint("Find the SM-BCR2 adapter and read the bicycle's components and paddle assignments")
         }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
     }
 
-    private var footer: some View {
-        Text("Reports contain the original JSON returned by the connection helper. SM-BCR2 does not provide the dealer battery-drain diagnostic test.")
-            .font(.system(size: 10))
-            .foregroundStyle(.tertiary)
-            .fixedSize(horizontal: false, vertical: true)
+    private var connectionInstructions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Connect to your bicycle")
+                .font(.headline)
+            Text("Plug the SM-BCR2 into your bicycle’s charging port and your Mac using a USB data cable. The bicycle needs a charged battery.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
     }
-}
 
-private struct ComponentCard: View {
-    let unit: BikeUnit
+    private var settingsMenu: some View {
+        Menu {
+            Button(model.supportFile == nil ? "Choose adapter support file…" : "Change adapter support file…", action: model.chooseSupportFile)
+                .disabled(model.isBusy)
+            if model.supportFile != nil {
+                Button("Forget adapter support file", action: model.forgetSupportFile)
+                    .disabled(model.isBusy)
+            }
+            Divider()
+            if model.devices.count > 1 {
+                Menu("Choose USB adapter") {
+                    ForEach(model.devices) { device in
+                        Button(action: { model.selectDevice(device.id) }) {
+                            if device.id == model.selectedID {
+                                Label(device.connectionName, systemImage: "checkmark")
+                            } else {
+                                Text(device.connectionName)
+                            }
+                        }
+                        .disabled(model.isBusy)
+                    }
+                }
+            }
+            Button("Check USB connection", action: model.discover).disabled(model.isBusy)
+            Button("Read adapter information", action: model.readAdapter).disabled(!model.canRead)
+        } label: {
+            Label("Settings", systemImage: "gearshape").labelStyle(.iconOnly)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Settings")
+        .accessibilityLabel("Settings")
+    }
 
-    var body: some View {
-        SectionCard {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: unit.symbol)
-                    .font(.system(size: 20))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 28, height: 30)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(unit.model)
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                        .textSelection(.enabled)
-                    Text(unit.role)
-                        .font(.system(size: 11))
+    private func bicycleControls(_ bicycle: BikeSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Paddle assignments").font(.title2.weight(.semibold))
+                Spacer()
+                if let date = bicycle.date {
+                    Text("Read \(date.formatted(date: .omitted, time: .shortened))")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Slot \(unit.slot)").font(.caption).foregroundStyle(.secondary)
-                    if let version = unit.firmwareVersion {
-                        Text("Firmware \(version)")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
+            }
+            if !model.bicycleIsCurrent {
+                Label("This information needs a fresh read before changes can be applied.", systemImage: "arrow.clockwise")
+                    .font(.callout)
+            }
+            let shifters = bicycle.units.filter { $0.number == 1 }
+            if shifters.isEmpty {
+                Text("No shifters were identified. Check the bicycle connection and refresh.")
+                    .foregroundStyle(.secondary)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: 16, alignment: .top)], alignment: .leading, spacing: 16) {
+                ForEach(shifters) { unit in
+                    ShifterEditor(unit: unit, model: model)
                 }
             }
-
-            if let paddles = unit.paddles {
-                Divider().padding(.vertical, 3)
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(paddles.returnedKeys, id: \.self) { key in
-                        HStack {
-                            Text(paddles.caption(for: key))
-                                .font(.system(size: 12, weight: .medium))
+            if !bicycle.units.filter({ $0.number != 1 }).isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Bicycle components").font(.headline)
+                    ForEach(bicycle.units.filter { $0.number != 1 }) { unit in
+                        HStack(spacing: 12) {
+                            Image(systemName: unit.symbol).frame(width: 24).accessibilityHidden(true)
+                            Text(unit.model).fontWeight(.medium)
+                            Text(unit.role).foregroundStyle(.secondary)
                             Spacer()
-                            Text(paddles.labels[key] ?? "")
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
+                            if let version = unit.firmwareVersion {
+                                Text("Firmware \(version)").foregroundStyle(.secondary)
+                            }
                         }
+                        .font(.callout)
                         .accessibilityElement(children: .combine)
-                    }
-                }
-            }
-
-            if let errors = unit.readErrors, !errors.isEmpty {
-                DisclosureGroup("\(errors.count) fields could not be read") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(Array(errors.enumerated()), id: \.offset) { _, error in
-                            Text(error).font(.caption).textSelection(.enabled)
-                        }
-                    }
-                    .padding(.top, 8)
-                }
-                .font(.caption)
-                .foregroundStyle(Theme.warning)
-            }
-
-            DisclosureGroup("Raw component identity") {
-                VStack(alignment: .leading, spacing: 7) {
-                    DetailRow(title: "Series / number", value: String(format: "%02x / %02x", unit.series, unit.number))
-                    DetailRow(title: "Part", value: unit.partKnown ? String(format: "%02x", unit.part) : "Not read")
-                    if let paddles = unit.paddles {
-                        DetailRow(title: "Paddle reply", value: paddles.raw)
                     }
                 }
                 .padding(.top, 8)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
-}
 
-private struct SectionCard<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) { content }
-            .padding(22)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.border, lineWidth: 1))
-    }
-}
-
-private struct Metric: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.system(size: 10)).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+    private var applyBar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(model.pendingChanges) { change in
+                    let name = model.bicycle?.units.first(where: { $0.slot == change.slot })?.shifterName ?? change.model
+                    Text("\(name) · Paddle \(change.key.caption): \(PaddleFunction.label(change.before)) → \(PaddleFunction.label(change.after))")
+                        .font(.callout)
+                }
+            }
+            .padding(.horizontal, 24)
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(model.pendingChanges.count) paddle \(model.pendingChanges.count == 1 ? "change" : "changes")")
+                        .font(.headline)
+                    if model.isBusy {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.mini)
+                            Text(model.activity)
+                        }
+                        .font(.callout)
+                    } else {
+                        Text("Apply writes these assignments, then reads them back to verify.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button("Discard changes", action: model.discardPaddleChanges)
+                    .disabled(model.isBusy)
+                Button("Apply changes", action: model.applyPaddleChanges)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(!model.canApply)
+                    .keyboardShortcut("s", modifiers: .command)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 16)
         }
-        .accessibilityElement(children: .combine)
+        .background(.bar)
     }
-}
 
-private struct StatusPill: View {
-    let title: String
-    let symbol: String
-    let color: Color
-
-    var body: some View {
-        Label(title, systemImage: symbol)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(color.opacity(0.08), in: Capsule())
-    }
-}
-
-private struct DetailRow: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .top) {
-            Text(title).frame(width: 110, alignment: .leading)
-            Text(value).fontDesign(.monospaced).textSelection(.enabled)
+    private var capabilities: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("What you can do").font(.headline)
+            Label("Read component models, firmware versions and supported paddle assignments", systemImage: "checkmark")
+            if let bicycle = model.bicycle {
+                if bicycle.units.contains(where: \.canEditPaddles) {
+                    Label("Change X and Y shift assignments on the supported shifters above", systemImage: "checkmark")
+                } else {
+                    Label("Paddle editing is unavailable for the components identified above", systemImage: "minus.circle")
+                }
+            } else {
+                Label("Change X and Y shift assignments after a supported shifter is identified", systemImage: "hand.point.up.left")
+            }
+            Text("Extra buttons, shift modes and firmware updates are not available yet.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.caption)
-        .accessibilityElement(children: .combine)
+        .font(.callout)
+    }
+
+    private var advanced: some View {
+        DisclosureGroup("Advanced connection details", isExpanded: $showsAdvanced) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(model.selectedDevice?.connectionName ?? "No USB adapter selected")
+                if let info = model.adapterInfo {
+                    LabeledContent("Adapter firmware", value: info.firmwareVersion)
+                }
+                Menu("Export diagnostic report") {
+                    ForEach(model.availableReports) { kind in
+                        Button(kind.rawValue) { model.export(kind) }
+                    }
+                }
+                .disabled(model.availableReports.isEmpty || model.isBusy)
+                if let error = model.errorMessage, error != model.friendlyErrorMessage {
+                    DisclosureGroup("Last connection error") {
+                        Text(error).font(.caption.monospaced()).textSelection(.enabled).padding(.top, 8)
+                    }
+                }
+                if let bicycle = model.bicycle {
+                    ForEach(bicycle.units) { unit in
+                        DisclosureGroup("\(unit.model) · slot \(unit.slot)") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(String(format: "Identity %02x/%02x/%02x", unit.series, unit.number, unit.part))
+                                if let paddles = unit.paddles { Text("Paddle reply: \(paddles.raw)") }
+                                ForEach(unit.readErrors ?? [], id: \.self) { Text($0) }
+                            }
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                            .padding(.top, 8)
+                        }
+                    }
+                }
+            }
+            .font(.callout)
+            .padding(.top, 16)
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private func errorMessage(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.applyUncertain ? "Check the bicycle before making more changes" : model.lastOperationWasApply ? "Paddle changes need attention" : "Connection needs attention")
+                    .font(.headline)
+                Text(message).textSelection(.enabled)
+                if model.applyUncertain {
+                    Text(model.applyRecoveryExplanation)
+                    if let result = model.lastApplyResult {
+                        ForEach(result.changes, id: \.slot) { change in
+                            let name = model.bicycle?.units.first(where: { $0.slot == change.slot })?.shifterName ?? "Shifter \(change.slot)"
+                            Label("\(name): \(change.status == "verified" ? "requested assignments verified" : "refresh to check assignments")",
+                                  systemImage: change.status == "verified" ? "checkmark.circle" : "arrow.clockwise")
+                        }
+                    }
+                } else if model.lastOperationWasApply {
+                    Text("Refresh the bicycle to read its current assignments, then review and select your changes again.")
+                } else if model.errorMessage?.contains("no bicycle components detected") != true {
+                    Text("Check both cables and the bicycle battery, then reconnect. If the adapter is unavailable, unplug and reconnect its USB cable.")
+                }
+            }
+            Spacer()
+            Button("Dismiss", action: model.dismissError)
+                .buttonStyle(.borderless)
+        }
+        .font(.callout)
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct ShifterEditor: View {
+    let unit: BikeUnit
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(unit.shifterName).font(.headline)
+                    if unit.shifterName != unit.model {
+                        Text(unit.model).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if let firmware = unit.firmwareVersion {
+                    Text("Firmware \(firmware)").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            if let paddles = unit.paddles {
+                VStack(alignment: .leading, spacing: 12) {
+                    assignment("X", current: paddles.a, key: .x)
+                    assignment("Y", current: paddles.b, key: .y)
+                }
+                if !unit.canEditPaddles {
+                    Text(unit.paddleEditReason ?? "Editing is not supported for this shifter yet.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Paddle assignments could not be read for this shifter.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func assignment(_ name: String, current: Int, key: PaddleKey) -> some View {
+        return HStack(alignment: .center, spacing: 16) {
+            Text("Paddle \(name)").fontWeight(.medium)
+            Spacer()
+            if unit.canEditPaddles {
+                Picker("\(unit.model), paddle \(name)", selection: Binding(
+                    get: { model.paddleValue(slot: unit.slot, key: key) ?? current },
+                    set: { model.setPaddle(slot: unit.slot, key: key, value: $0) }
+                )) {
+                    if !PaddleFunction.standard.contains(current) {
+                        Text("\(PaddleFunction.label(current)) (current)").tag(current)
+                    }
+                    ForEach(PaddleFunction.standard, id: \.self) { value in
+                        Text("\(PaddleFunction.label(value))\(value == current ? " (current)" : "")").tag(value)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 215)
+                .disabled(model.isBusy || !model.bicycleIsCurrent)
+                .accessibilityLabel("\(unit.model), paddle \(name) assignment")
+            } else {
+                Text(PaddleFunction.label(current))
+            }
+        }
     }
 }
